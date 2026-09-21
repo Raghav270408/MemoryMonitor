@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Monitor Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-gray-900 text-white font-sans antialiased min-h-screen flex flex-col items-center p-6">
+
+    <header class="w-full max-w-4xl flex justify-between items-center mb-8 bg-gray-800 p-4 rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold tracking-wider">MEMORY MONITOR</h1>
+        <div class="flex items-center space-x-2">
+            <div id="connection-indicator" class="w-3 h-3 rounded-full bg-red-500"></div>
+            <span id="connection-text" class="text-gray-300 font-medium">Android Device: Disconnected</span>
+        </div>
+    </header>
+
+    <main class="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        <!-- RAM SECTION -->
+        <section class="bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col items-center">
+            <h2 class="text-xl font-semibold mb-6 tracking-wide text-gray-400">RAM USAGE</h2>
+            
+            <!-- Circular Indicator -->
+            <div class="relative w-48 h-48 rounded-full flex items-center justify-center mb-6 bg-gray-700 shadow-inner" id="ram-circle">
+                <div class="absolute w-40 h-40 bg-gray-800 rounded-full flex flex-col items-center justify-center">
+                    <span id="ram-percentage" class="text-4xl font-bold">0%</span>
+                    <span class="text-sm text-gray-400 mt-1">RAM Used</span>
+                </div>
+            </div>
+
+            <div class="w-full grid grid-cols-2 gap-4 text-center mb-6">
+                <div class="bg-gray-700 p-3 rounded">
+                    <div class="text-gray-400 text-xs mb-1 uppercase tracking-wider">Used</div>
+                    <div id="ram-used" class="font-bold text-lg">0.0 GB</div>
+                </div>
+                <div class="bg-gray-700 p-3 rounded">
+                    <div class="text-gray-400 text-xs mb-1 uppercase tracking-wider">Available</div>
+                    <div id="ram-available" class="font-bold text-lg">0.0 GB</div>
+                </div>
+            </div>
+
+            <div class="w-full text-center bg-gray-700 py-2 rounded mb-4">
+                <span class="text-gray-400">Total RAM:</span> <span id="ram-total" class="font-bold">0.0 GB</span>
+            </div>
+
+            <div class="w-full space-y-2 text-sm bg-gray-900 p-4 rounded-lg">
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Memory Pressure</span>
+                    <span id="ram-pressure" class="font-semibold text-gray-400">-</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">System Status</span>
+                    <span id="ram-status" class="font-semibold text-gray-400">-</span>
+                </div>
+                <div class="flex justify-between border-t border-gray-700 pt-2 mt-2">
+                    <span class="text-gray-400">This App Usage</span>
+                    <span id="ram-app" class="font-semibold text-blue-400">0 MB</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- STORAGE SECTION -->
+        <section class="bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col">
+            <div class="flex items-center justify-center mb-8 space-x-2">
+                <!-- Material Storage Icon (svg) -->
+                <svg class="w-6 h-6 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M4 20h16v-4H4v4zm0-6h16v-4H4v4zm0-8v4h16V6H4z"/>
+                </svg>
+                <h2 class="text-xl font-semibold tracking-wide text-gray-400">STORAGE</h2>
+            </div>
+            
+            <div class="flex-grow flex flex-col justify-center pb-8">
+                <div class="text-center mb-6">
+                    <span id="storage-percentage" class="text-5xl font-bold">0%</span>
+                    <span class="text-xl text-gray-400 ml-2">Used</span>
+                </div>
+
+                <div class="text-center text-gray-300 font-medium mb-4 tracking-wider">
+                    <span id="storage-used-val">0 GB</span> / <span id="storage-total-val">0 GB</span>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="w-full h-4 bg-gray-700 rounded-full overflow-hidden mb-8">
+                    <div id="storage-bar" class="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 text-center">
+                    <div class="bg-gray-700 p-3 rounded">
+                        <div class="text-gray-400 text-xs mb-1 uppercase tracking-wider">Used</div>
+                        <div id="storage-used" class="font-bold text-lg">0 GB</div>
+                    </div>
+                    <div class="bg-gray-700 p-3 rounded">
+                        <div class="text-gray-400 text-xs mb-1 uppercase tracking-wider">Free</div>
+                        <div id="storage-free" class="font-bold text-lg">0 GB</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
