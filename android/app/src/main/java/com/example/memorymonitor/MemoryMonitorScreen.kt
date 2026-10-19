@@ -35,9 +35,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.memorymonitor.ui.theme.MemoryMonitorTheme
 
-// ---------------------------------------------------------------------------
-// Main screen
-// ---------------------------------------------------------------------------
 
 @Composable
 fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier) {
@@ -48,7 +45,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
             .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
 
-        // ── Header ──────────────────────────────────────────────────────────
+        // Header
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Filled.Memory,
@@ -75,14 +72,14 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
 
         if (memoryStats != null) {
 
-            // ── Circular memory usage indicator ─────────────────────────────
+            // Circular memory usage indicator
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                // Track ring (full circle, dimmed)
+                // Track ring
                 CircularProgressIndicator(
                     progress = { 1f },
                     modifier = Modifier.size(180.dp),
@@ -116,7 +113,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ── Used / Available side-by-side ────────────────────────────────
+            //Used / Available side-by-side
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -135,7 +132,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── Additional Statistics ───────────────────────────────────────
+            // Additional Statistics
             StatRow(
                 icon = Icons.Filled.Storage,
                 label = "Total Memory",
@@ -159,7 +156,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // ── Header Storage ──────────────────────────────────────────────────────────
+            // Header Storage
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Filled.Storage,
@@ -215,7 +212,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
 
         } else {
 
-            // ── Loading state ────────────────────────────────────────────────
+            // Loading state
             Text(
                 text = "Fetching memory data…",
                 style = MaterialTheme.typography.bodyLarge,
@@ -225,9 +222,7 @@ fun MemoryMonitorScreen(memoryStats: MemoryStats?, modifier: Modifier = Modifier
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compact stat card (label on top, value below)
-// ---------------------------------------------------------------------------
+
 
 @Composable
 fun CompactStatCard(label: String, value: String, modifier: Modifier = Modifier) {
@@ -252,9 +247,6 @@ fun CompactStatCard(label: String, value: String, modifier: Modifier = Modifier)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stat Row (icon, label, value)
-// ---------------------------------------------------------------------------
 
 @Composable
 fun StatRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, modifier: Modifier = Modifier) {
@@ -283,9 +275,7 @@ fun StatRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String
     }
 }
 
-// ---------------------------------------------------------------------------
-// Previews
-// ---------------------------------------------------------------------------
+
 
 @Preview(showBackground = true, showSystemUi = true)
 @Composable

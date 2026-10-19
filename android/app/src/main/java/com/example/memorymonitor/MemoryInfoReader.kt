@@ -17,8 +17,18 @@ data class MemoryStats(
     val totalStorageGB: Long,
     val freeStorageGB: Long,
     val usedStorageGB: Long,
-    val storageUsagePercentage: Int
-)
+    val storageUsagePercentage: Int,
+    val totalMemoryBytes: Long = totalMemoryMB * 1024L * 1024L,
+    val availableMemoryBytes: Long = availableMemoryMB * 1024L * 1024L,
+    val usedMemoryBytes: Long = usedMemoryMB * 1024L * 1024L,
+    val appMemoryBytes: Long = appMemoryUsageMB * 1024L * 1024L,
+    val totalStorageBytes: Long = totalStorageGB * 1024L * 1024L * 1024L,
+    val freeStorageBytes: Long = freeStorageGB * 1024L * 1024L * 1024L,
+    val usedStorageBytes: Long = usedStorageGB * 1024L * 1024L * 1024L
+) {
+    fun toJsonString(): String =
+        """{"ram":{"totalBytes":$totalMemoryBytes,"availableBytes":$availableMemoryBytes,"usedBytes":$usedMemoryBytes,"usagePercentage":$usagePercentage,"memoryPressure":"$memoryPressure","systemMemoryStatus":"${if (lowMemoryStatus) "Low Memory" else "Normal"}","appMemoryBytes":$appMemoryBytes},"storage":{"totalBytes":$totalStorageBytes,"availableBytes":$freeStorageBytes,"usedBytes":$usedStorageBytes,"usagePercentage":$storageUsagePercentage}}"""
+}
 
 class MemoryInfoReader(private val context: Context) {
     fun getMemoryStats(): MemoryStats {
@@ -48,6 +58,7 @@ class MemoryInfoReader(private val context: Context) {
 
         val debugMemoryInfo = Debug.MemoryInfo()
         Debug.getMemoryInfo(debugMemoryInfo)
+        val appMemoryBytes = debugMemoryInfo.totalPss * 1024L
         val appMemoryMB = (debugMemoryInfo.totalPss / 1024).toLong()
 
         val path = Environment.getDataDirectory().path
@@ -81,7 +92,14 @@ class MemoryInfoReader(private val context: Context) {
             totalStorageGB = totalStorageGB,
             freeStorageGB = freeStorageGB,
             usedStorageGB = usedStorageGB,
-            storageUsagePercentage = storagePercentage
+            storageUsagePercentage = storagePercentage,
+            totalMemoryBytes = totalBytes,
+            availableMemoryBytes = availableBytes,
+            usedMemoryBytes = usedBytes,
+            appMemoryBytes = appMemoryBytes,
+            totalStorageBytes = totalStorageBytes,
+            freeStorageBytes = freeStorageBytes,
+            usedStorageBytes = usedStorageBytes
         )
     }
 }
