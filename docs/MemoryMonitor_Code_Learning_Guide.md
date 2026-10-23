@@ -633,6 +633,6 @@ The server only broadcasts `device_status: { connected: false }` if `activeSocke
 3. **Binary Serialization (Protocol Buffers):**
    - *Current Implementation:* Plaintext JSON with newline framing.
    - *Proposed Extension:* Replace JSON with Protocol Buffers (Protobuf). A compiled binary schema would reduce the payload from ~380 bytes to ~45 bytes, reducing serialization CPU overhead and power consumption.
-4. **Per-Process Process Table:**
-   - *Current Implementation:* Measures overall system RAM and the monitor app's own PSS footprint.
-   - *Proposed Extension:* Query `UsageStatsManager` or read non-restricted fields from `/proc` to display the top 5 memory-consuming applications currently running in the background.
+4. **Per-Process Process Table (Implemented as Per-Application Memory Monitoring):**
+   - *Current Implementation:* Measures overall system RAM, the monitor app's own PSS footprint, and extends to per-application memory displayed both on the desktop dashboard and directly inside the Android phone app under a strictly one-way streaming pipeline (Android -> Desktop) over TCP port 8080.
+   - *Technical Details:* Implemented using local Android telemetry (accurate host PSS via Debug.MemoryInfo and installed packages marked Restricted (OS) under Android 10+ sandboxing), paired with an independent desktop ADB collector (dumpsys meminfo) that displays full device process metrics exclusively in the desktop browser dashboard, as detailed in Sections 8.6 and 8.7 of the Instruction Manual.

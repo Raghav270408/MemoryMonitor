@@ -3,6 +3,7 @@ const http = require('http');
 const net = require('net');
 const { Server } = require('socket.io');
 const path = require('path');
+const { AdbCollector } = require('./adbCollector');
 
 // Configuration
 const HTTP_PORT = 3000;
@@ -20,10 +21,38 @@ app.use(express.static(path.join(__dirname, 'public')));
 let latestData = {
     ram: null,
     storage: null,
+    apps: [],
+    inAppApps: [],
+    adbApps: [],
     connected: false,
     lastUpdated: null,
     totalFramesReceived: 0
 };
+
+// Set of active Android TCP sockets
+const activeSockets = new Set();
+let watchdogTimer = null;
+
+// Initialize optional ADB collector for physical PSS process inspection
+const adbCollector = new AdbCollector({
+    pollIntervalMs: 3500,
+    onUpdate: (apps, status) => {
+        latestData.adbApps = apps;
+        if (latestData.connected) {
+            latestData.apps = apps;
+            io.emit('monitoring_data', {
+                ram: latestData.ram,
+                storage: latestData.storage,
+                apps: latestData.apps,
+                adbStatus: status,
+                timestamp: Date.now()
+            });
+        }
+    }
+});
+
+// Start ADB polling
+adbCollector.start();
 
 // API endpoint for health check and diagnostics
 app.get('/api/status', (req, res) => {
@@ -33,13 +62,12 @@ app.get('/api/status', (req, res) => {
         totalFramesReceived: latestData.totalFramesReceived,
         activeSockets: activeSockets.size,
         ram: latestData.ram,
-        storage: latestData.storage
+        storage: latestData.storage,
+        appsCount: (latestData.apps || []).length,
+        apps: latestData.apps,
+        adbStatus: adbCollector.getStatus()
     });
 });
-
-// Set of active Android TCP sockets
-const activeSockets = new Set();
-let watchdogTimer = null;
 
 function setDeviceConnected(connected) {
     if (latestData.connected !== connected) {
@@ -66,11 +94,13 @@ io.on('connection', (socket) => {
     
     // Send the latest known status and data immediately upon connection
     socket.emit('device_status', { connected: latestData.connected });
-    if (latestData.ram || latestData.storage) {
+    if (latestData.ram || latestData.storage || (latestData.apps && latestData.apps.length > 0)) {
         socket.emit('monitoring_data', {
             ram: latestData.ram,
             storage: latestData.storage,
-            timestamp: latestData.lastUpdated
+            apps: latestData.apps,
+            adbStatus: adbCollector.getStatus(),
+            timestamp: latestData.lastUpdated || Date.now()
         });
     }
 
@@ -78,6 +108,39 @@ io.on('connection', (socket) => {
         console.log('[Web] Browser client disconnected');
     });
 });
+
+// Helper to process a parsed JSON object from Android
+function handleIncomingPayload(parsedData) {
+    if (!parsedData || typeof parsedData !== 'object') return false;
+    if (!parsedData.ram && !parsedData.storage && !parsedData.apps) return false;
+
+    if (parsedData.ram && typeof parsedData.ram === 'object') latestData.ram = parsedData.ram;
+    if (parsedData.storage && typeof parsedData.storage === 'object') latestData.storage = parsedData.storage;
+    if (parsedData.apps && Array.isArray(parsedData.apps)) latestData.inAppApps = parsedData.apps;
+
+    latestData.totalFramesReceived++;
+    latestData.lastUpdated = Date.now();
+    parsedData.timestamp = latestData.lastUpdated;
+
+    // Use authentic ADB per-process PSS if ADB collector is active; otherwise use in-app telemetry
+    const adbStatus = adbCollector.getStatus();
+    if (adbStatus.active && latestData.adbApps && latestData.adbApps.length > 0) {
+        parsedData.apps = latestData.adbApps;
+    } else {
+        parsedData.apps = latestData.inAppApps;
+    }
+    latestData.apps = parsedData.apps;
+    parsedData.adbStatus = adbStatus;
+
+    if (latestData.totalFramesReceived % 10 === 0) {
+        console.log(`[Metrics] Total frames received: ${latestData.totalFramesReceived}. RAM usage: ${parsedData.ram?.usagePercentage}% (${parsedData.ram?.usedBytes} bytes), Storage: ${parsedData.storage?.usagePercentage}%, Apps reporting: ${parsedData.apps?.length || 0}`);
+    }
+
+    setDeviceConnected(true);
+    resetWatchdog();
+    io.emit('monitoring_data', parsedData);
+    return true;
+}
 
 // TCP Server (Android App to Server)
 const tcpServer = net.createServer((socket) => {
@@ -103,16 +166,7 @@ const tcpServer = net.createServer((socket) => {
             if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
                 try {
                     const parsedData = JSON.parse(trimmed);
-                    if (parsedData && typeof parsedData === 'object' && (parsedData.ram || parsedData.storage)) {
-                        if (parsedData.ram && typeof parsedData.ram === 'object') latestData.ram = parsedData.ram;
-                        if (parsedData.storage && typeof parsedData.storage === 'object') latestData.storage = parsedData.storage;
-                        latestData.totalFramesReceived++;
-                        latestData.lastUpdated = Date.now();
-                        parsedData.timestamp = latestData.lastUpdated;
-
-                        setDeviceConnected(true);
-                        resetWatchdog();
-                        io.emit('monitoring_data', parsedData);
+                    if (handleIncomingPayload(parsedData)) {
                         buffer = ''; // clear buffer after successful parse
                     }
                 } catch (_) {
@@ -128,21 +182,7 @@ const tcpServer = net.createServer((socket) => {
                 if (!trimmed) continue;
                 try {
                     const parsedData = JSON.parse(trimmed);
-                    if (parsedData && typeof parsedData === 'object' && (parsedData.ram || parsedData.storage)) {
-                        if (parsedData.ram && typeof parsedData.ram === 'object') latestData.ram = parsedData.ram;
-                        if (parsedData.storage && typeof parsedData.storage === 'object') latestData.storage = parsedData.storage;
-                        latestData.totalFramesReceived++;
-                        latestData.lastUpdated = Date.now();
-                        parsedData.timestamp = latestData.lastUpdated;
-
-                        if (latestData.totalFramesReceived % 10 === 0) {
-                            console.log(`[Metrics] Total frames received: ${latestData.totalFramesReceived}. RAM usage: ${parsedData.ram?.usagePercentage}% (${parsedData.ram?.usedBytes} bytes), Storage: ${parsedData.storage?.usagePercentage}%`);
-                        }
-
-                        setDeviceConnected(true);
-                        resetWatchdog();
-                        io.emit('monitoring_data', parsedData);
-                    }
+                    handleIncomingPayload(parsedData);
                 } catch (parseErr) {
                     console.warn('[TCP] Ignored malformed message from Android:', parseErr.message);
                 }
@@ -150,7 +190,7 @@ const tcpServer = net.createServer((socket) => {
         }
 
         // Buffer overflow protection
-        if (buffer.length > 100000) {
+        if (buffer.length > 200000) {
             console.log('[TCP] Buffer cleared to prevent overflow');
             buffer = '';
         }

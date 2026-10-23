@@ -46,9 +46,10 @@ class MainActivity : ComponentActivity() {
                                 val stats = withContext(Dispatchers.IO) {
                                     try {
                                         val currentStats = memoryInfoReader.getMemoryStats()
+                                        // One-way outbound transmission to desktop over TCP
                                         val sent = tcpSender.send(currentStats.toJsonString())
                                         if (!sent) {
-                                            Log.d(TAG, "Metric transmission returned false (server not reachable or connection lost)")
+                                            Log.d(TAG, "Outbound metric transmission returned false (desktop server not reachable)")
                                         }
                                         currentStats
                                     } catch (e: CancellationException) {

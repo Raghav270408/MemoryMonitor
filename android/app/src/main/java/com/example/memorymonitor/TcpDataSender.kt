@@ -13,7 +13,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 /**
- * Handles persistent TCP connection and message transmission to the desktop server.
+ * Handles persistent one-way TCP connection and message transmission to the desktop server.
  * Connects to 127.0.0.1 on the specified port (forwarded via ADB over USB).
  *
  * All network operations are executed on Dispatchers.IO.
@@ -36,7 +36,7 @@ class TcpDataSender(
     private var transmitCount = 0L
 
     /**
-     * Sends a newline-delimited JSON payload to the desktop server.
+     * Sends a newline-delimited JSON payload to the desktop server over the one-way TCP connection.
      * Re-establishes connection automatically if disconnected or on failure.
      * Returns true if sent successfully, false otherwise.
      */
@@ -65,7 +65,7 @@ class TcpDataSender(
     }
 
     /**
-     * Ensures an active, connected socket. If not connected or closed, attempts connection.
+     * Ensures an active, connected socket with configured I/O stream.
      */
     private fun ensureConnected() {
         val s = socket

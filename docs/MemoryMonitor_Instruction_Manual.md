@@ -432,3 +432,119 @@ Verify that `connected` is `true` and `totalFramesReceived` increments between s
 - **Symptom:** The connection shows connected, but numbers appear frozen.
 - **Root Cause:** In earlier versions, formatting truncated values to single decimals (`5.1 GB`), concealing 20 MB changes.
 - **Fix:** Verify that `desktop/public/js/app.js` is updated with `formatBytes(bytes, 2)`. Observe the `#last-updated` timestamp in the header to confirm the 1-second heartbeat.
+
+
+---
+
+## 8. Per-Application Memory Monitoring Feature
+
+### 8.1 What the Feature Measures
+The Per-Application Memory Monitoring feature visualizes process-level memory consumption across active applications on the target Android device.
+- **Primary Metric:** Proportional Set Size (**PSS**), measured in Megabytes (MB).
+- **Metric Accounting:** PSS accounts for private physical RAM pages allocated exclusively to a process, plus a proportional share of shared libraries mapped across multiple processes.
+- **Attributes Tracked per Application:**
+  - `packageName`: Unique Android package identifier (e.g., `com.android.chrome`, `com.example.memorymonitor`).
+  - `displayName`: Human-readable application label.
+  - `pid`: Process identifier (integer) when available.
+  - `memoryMB`: Physical PSS memory in MB (with documented conversion: $\text{KB} / 1024.0$).
+  - `memoryBytes`: Exact memory in bytes ($\text{KB} \times 1024$).
+  - `metric`: Memory classification (`"PSS"`).
+  - `source`: Collector mechanism (`"Debug.MemoryInfo"` or `"ADB dumpsys meminfo"`).
+  - `status`: Authenticity indicator (`"available"`, `"restricted"`, or `"unavailable"`).
+  - `statusMessage`: Diagnostic reason when data is restricted.
+  - `timestamp`: Epoch millisecond timestamp of collection.
+
+---
+
+### 8.2 Android OS Sandboxing Constraints & API Restrictions
+On modern Android versions, Linux kernel security policies (SELinux `hidepid=2`) and Android application sandboxing enforce strict process isolation:
+1. **`ActivityManager.getProcessMemoryInfo(int[] pids)`:** Starting with **Android 10 (API Level 29)**, unprivileged third-party apps querying this API for PIDs belonging to other applications receive zeroed-out structures (0 bytes) or encounter security exceptions.
+2. **`ActivityManager.getRunningAppProcesses()`:** Starting with Android 5.1 (API 22) and Android 7.0 (API 24), this returns only the calling application's own process.
+3. **`UsageStatsManager`:** While queryable with `PACKAGE_USAGE_STATS` granted in Settings, `UsageStatsManager` provides execution duration and launch timestamps, **not** physical RAM metrics.
+4. **Truthfulness Guarantee:** In compliance with project guidelines, the monitor never reports zero as proof of zero RAM, nor does it label usage time or heap space as another app's RAM. Measurements that cannot be obtained by an unprivileged app are explicitly reported as `status: "restricted"`.
+
+---
+
+### 8.3 Dual Collection Engine Architecture
+
+To provide authentic data while keeping the Android application standalone:
+
+```text
+[ Android Device ]
+  │
+  ├─ In-App Telemetry (MemoryInfoReader.kt)
+  │    ├─ Debug.getMemoryInfo()  ==> Memory Monitor PSS (status: "available")
+  │    ├─ PackageManager         ==> User app labels (status: "restricted")
+  │    └─ TCP Socket (port 8080) ==> Newline-delimited JSON stream
+  │
+  └─ ADB Shell Channel (desktop/adbCollector.js)
+       ├─ adb shell dumpsys meminfo (UID 2000 / Shell)
+       ├─ Extracts true PSS for all OS processes (Chrome, YouTube, System UI)
+       └─ Merges into Desktop Dashboard (status: "available")
+```
+
+1. **In-App Standalone Telemetry:**
+   - Always measures `com.example.memorymonitor` via `Debug.getMemoryInfo()` with full physical PSS accuracy.
+   - Discovers installed launchable apps via `PackageManager.queryIntentActivities()` with a 30-second cache to eliminate CPU overhead.
+   - Bounded to 20 applications to keep network payloads lightweight over TCP.
+   - Declares `QUERY_ALL_PACKAGES` permission in `AndroidManifest.xml` for visibility on Android 11+ (API 30+).
+   - Marks third-party apps as `status: "restricted"` with explanation `"Restricted by Android OS (API 29+ security sandboxing)"`.
+
+2. **Desktop ADB-Assisted Collector (`desktop/adbCollector.js`):**
+   - Automatically detects connected Android devices via `adb devices`.
+   - Runs under Android's `shell` UID (UID 2000), which possesses the `DUMP` permission.
+   - Samples `dumpsys meminfo` at conservative 3.5-second intervals.
+   - Parses the `Total PSS by process:` table, extracting verified physical PSS memory for every running process and background service.
+   - Graceful fallback: If ADB is absent, unauthorized, or disconnected, the desktop server immediately falls back to In-App telemetry with zero crashes or pipeline interruptions.
+
+---
+
+### 8.4 Desktop Dashboard Per-App View
+The desktop web interface includes an **APPLICATION MEMORY USAGE** panel featuring:
+- **Live Search & Filter:** Filter applications by package name or display label in real time.
+- **Dynamic Sorting:**
+  - `Memory: High to Low` (places highest RAM consumers at top, restricted apps at bottom)
+  - `Memory: Low to High`
+  - `Name: A to Z`
+- **Source Indicator Badge:** Clearly identifies whether metrics originate from `ADB Shell (Live PSS)` or `In-App Telemetry`.
+- **Status Badges:** Distinct visual styles for `Available` (green), `Restricted (OS)` (amber), and `Unavailable` (gray).
+- **Empty State:** Clean placeholder when no telemetry has arrived.
+
+---
+
+### 8.5 Verification & Tested Platforms
+- **Android Platform Tested:** Android SDK API Level 37 (`compileSdk = 37`, `minSdk = 24`, `targetSdk = 37`).
+- **Android Build & Unit Tests:** Gradle 9.5.0, Android Gradle Plugin 9.3.2, Kotlin 2.2.10. Verified with `.\gradlew.bat test`, `.\gradlew.bat check`, and `.\gradlew.bat assembleDebug`.
+- **Desktop Runtime Tested:** Node.js v24.15.0 LTS on Windows 11. Verified with `npm test` (15 unit & integration tests covering ADB output parsing, unit conversions, JSON backward compatibility, streaming framing, and dashboard rendering).
+- **Physical Device Compatibility:** Designed for USB-tethered Android smartphones with USB Debugging enabled. Fully compatible with standalone Wi-Fi connections via In-App fallback.
+
+
+---
+
+### 8.6 Android In-App Application Memory View
+The Android application provides direct visualization of application memory allocations on the phone screen:
+1. **How to Open the Screen:**
+   - Tap the **Apps** tab in the top navigation bar (`MemoryMonitorScreen.kt`), or
+   - Tap the **View Apps** button located on the Application Memory summary card at the bottom of the System Overview screen.
+2. **User Interface Controls:**
+   - **Search:** Instant text filter by application display label or package name (e.g. `chrome`, `youtube`).
+   - **Sorting:** Dedicated filter chips supporting `Highest RAM`, `Lowest RAM`, and `Name (A-Z)`.
+   - **Status Badges:** Distinct visual badges for `Available` (green), `Restricted (OS)` (amber), and `Unavailable` (gray).
+   - **Telemetry Banner:** Informs the user that metrics reflect local in-app sandboxed telemetry.
+   - **Zero-Fabrication Guarantee:** Missing measurements are explicitly labeled `Restricted (OS)` in amber italics; they are never rendered as 0 MB.
+
+---
+
+### 8.7 Strictly One-Way Telemetry Pipeline (Android $\rightarrow$ Desktop)
+1. **Network Architecture:**
+   - Communication uses the standard reverse tunnel on `tcp:8080` established by `adb reverse tcp:8080 tcp:8080`.
+   - Eliminates the need for auxiliary ports, firewall rules, or reverse socket servers.
+2. **Strictly One-Way Streaming Protocol:**
+   - **Outbound Stream (Android $\rightarrow$ Desktop Only):** Android collects system RAM/storage metrics and locally accessible process metrics (`Debug.MemoryInfo` for host PSS, `PackageManager` for installed packages with `restricted` status). Android serializes this payload to newline-delimited JSON and pushes it across `127.0.0.1:8080` via `TcpDataSender.send()`.
+   - **No Reverse Traffic:** The desktop server functions strictly as an ingestion listener. It does not send reverse telemetry packets, polling requests, or response payloads back across the TCP socket to the phone.
+3. **Desktop ADB Role:**
+   - The desktop ADB collector (`desktop/adbCollector.js`) operates independently on the host workstation, polling `dumpsys meminfo` via ADB shell UID 2000.
+   - ADB-collected process PSS measurements power the desktop browser dashboard and remain strictly on the desktop. They are not transmitted back to the mobile device.
+4. **Resilience & Fault Tolerance:**
+   - The Android network loop operates asynchronously in coroutine context (`Dispatchers.IO`) with zero blocking on the Compose UI main thread.
+   - If the desktop server is closed or the USB connection drops, `TcpDataSender` gracefully catches the socket exception, disconnects, and automatically attempts reconnection on the next sampling cycle without crashing.
