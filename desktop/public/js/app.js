@@ -1,49 +1,27 @@
 const socket = io();
 
-// Format bytes to a human-readable string (MB or GB) with customizable decimal precision
-function formatBytes(bytes, decimals = 2) {
+// Format bytes to a human-readable string (MB or GB)
+function formatBytes(bytes, decimals = 1) {
     if (bytes === undefined || bytes === null || bytes === 0) return '0 MB';
     const mb = bytes / (1024 * 1024);
-    if (mb >= 1000) {
+    if (mb >= 1024) {
         return (mb / 1024).toFixed(decimals) + ' GB';
     }
     return mb.toFixed(0) + ' MB';
-}
-
-// Client-side watchdog to detect when data stream stops
-let clientWatchdog = null;
-function pingClientWatchdog() {
-    clearTimeout(clientWatchdog);
-    clientWatchdog = setTimeout(() => {
-        updateConnectionStatus(false);
-    }, 4500);
 }
 
 // Update Connection Status in UI
 function updateConnectionStatus(connected) {
     const indicator = document.getElementById('connection-indicator');
     const text = document.getElementById('connection-text');
-    const lastUpdateEl = document.getElementById('last-updated');
 
-    if (connected) {
-        if (indicator) {
-            indicator.classList.remove('bg-red-500');
-            indicator.classList.add('bg-green-500');
-        }
-        if (text) {
-            text.textContent = 'Android Device: Connected';
-        }
-        if (lastUpdateEl) {
-            lastUpdateEl.classList.remove('hidden');
-        }
-    } else {
-        if (indicator) {
-            indicator.classList.remove('bg-green-500');
-            indicator.classList.add('bg-red-500');
-        }
-        if (text) {
-            text.textContent = 'Android Device: Disconnected';
-        }
+    if (indicator) {
+        indicator.className = connected
+            ? 'w-2.5 h-2.5 rounded-full bg-emerald-500'
+            : 'w-2.5 h-2.5 rounded-full bg-red-500';
+    }
+    if (text) {
+        text.textContent = connected ? 'Connected' : 'Disconnected';
     }
 }
 
@@ -52,11 +30,8 @@ socket.on('device_status', (data) => {
     updateConnectionStatus(!!data.connected);
 });
 
-// Socket.IO Connection Lifecycle Events
 socket.on('disconnect', () => {
     updateConnectionStatus(false);
-    const text = document.getElementById('connection-text');
-    if (text) text.textContent = 'Server: Disconnected';
 });
 
 socket.on('connect', () => {
@@ -66,22 +41,13 @@ socket.on('connect', () => {
 // Local state for Applications List
 let currentApps = [];
 let searchQuery = '';
-let sortMode = 'mem-desc';
 
-// Setup search and sort controls
+// Setup search filter
 document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('apps-search');
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             searchQuery = e.target.value.toLowerCase().trim();
-            renderAppsTable();
-        });
-    }
-
-    const sortSelect = document.getElementById('apps-sort');
-    if (sortSelect) {
-        sortSelect.addEventListener('change', (e) => {
-            sortMode = e.target.value;
             renderAppsTable();
         });
     }
@@ -98,7 +64,7 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-// Renders the Applications Table based on currentApps, filter, and sort
+// Renders the Applications Table
 function renderAppsTable() {
     const tbody = document.getElementById('apps-table-body');
     const emptyState = document.getElementById('apps-empty-state');
@@ -110,38 +76,21 @@ function renderAppsTable() {
         return;
     }
 
-    // Filter
+    // Filter by search query
     let filtered = currentApps.filter(app => {
         if (!searchQuery) return true;
-        const name = (app.displayName || '').toLowerCase();
         const pkg = (app.packageName || '').toLowerCase();
-        return name.includes(searchQuery) || pkg.includes(searchQuery);
+        return pkg.includes(searchQuery);
     });
 
-    // Sort
-    filtered.sort((a, b) => {
-        if (sortMode === 'mem-desc') {
-            const memA = a.memoryBytes !== null && a.memoryBytes !== undefined ? a.memoryBytes : -1;
-            const memB = b.memoryBytes !== null && b.memoryBytes !== undefined ? b.memoryBytes : -1;
-            if (memB !== memA) return memB - memA;
-            return (a.displayName || '').localeCompare(b.displayName || '');
-        } else if (sortMode === 'mem-asc') {
-            const memA = a.memoryBytes !== null && a.memoryBytes !== undefined ? a.memoryBytes : Infinity;
-            const memB = b.memoryBytes !== null && b.memoryBytes !== undefined ? b.memoryBytes : Infinity;
-            if (memA !== memB) return memA - memB;
-            return (a.displayName || '').localeCompare(b.displayName || '');
-        } else if (sortMode === 'name-asc') {
-            return (a.displayName || '').localeCompare(b.displayName || '');
-        }
-        return 0;
-    });
+    // Always sort by memory descending
+    filtered.sort((a, b) => (b.memoryBytes || 0) - (a.memoryBytes || 0));
 
     if (filtered.length === 0) {
         tbody.innerHTML = '';
         if (emptyState) {
             emptyState.classList.remove('hidden');
-            const emptyText = emptyState.querySelector('p');
-            if (emptyText) emptyText.textContent = `No applications match "${escapeHtml(searchQuery)}"`;
+            emptyState.innerHTML = `<p class="text-xs text-gray-500">No processes matching "${escapeHtml(searchQuery)}"</p>`;
         }
         return;
     }
@@ -150,44 +99,26 @@ function renderAppsTable() {
 
     let html = '';
     for (const app of filtered) {
-        const safeName = escapeHtml(app.displayName || 'Unknown');
-        const safePkg = escapeHtml(app.packageName || '');
-        const pidDisplay = app.pid !== null && app.pid !== undefined ? app.pid : '—';
+        const safePkg = escapeHtml(app.packageName || 'unknown');
+        const pidStr = app.pid ? `<span class="text-gray-500 text-[11px] ml-1.5 font-mono">pid ${app.pid}</span>` : '';
         
         let memDisplay = '—';
         if (app.memoryMB !== null && app.memoryMB !== undefined) {
             if (app.memoryMB >= 1024) {
-                memDisplay = `<span class="font-bold text-white">${(app.memoryMB / 1024).toFixed(2)}</span> <span class="text-xs text-gray-400">GB</span>`;
+                memDisplay = `<span class="font-medium text-white">${(app.memoryMB / 1024).toFixed(2)} GB</span>`;
             } else {
-                memDisplay = `<span class="font-bold text-white">${Number(app.memoryMB).toFixed(1)}</span> <span class="text-xs text-gray-400">MB</span>`;
+                memDisplay = `<span class="font-medium text-white">${Number(app.memoryMB).toFixed(1)} MB</span>`;
             }
-        } else if (app.status === 'restricted') {
-            memDisplay = '<span class="text-xs text-amber-400/90 italic font-sans" title="Restricted by Android OS">Restricted</span>';
-        } else {
-            memDisplay = '<span class="text-xs text-gray-500 italic font-sans">Unavailable</span>';
         }
-
-        let statusBadge = '';
-        if (app.status === 'available') {
-            statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-sans font-medium bg-green-900/50 text-green-300 border border-green-700/40">Available</span>';
-        } else if (app.status === 'restricted') {
-            statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-sans font-medium bg-amber-900/40 text-amber-300 border border-amber-700/40" title="Restricted by Android 10+ sandboxing">Restricted (OS)</span>';
-        } else {
-            statusBadge = `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-sans font-medium bg-gray-700 text-gray-300">${escapeHtml(app.status || 'Unknown')}</span>`;
-        }
-
-        const metric = escapeHtml(app.metric || 'PSS');
 
         html += `
-        <tr class="hover:bg-gray-750 transition-colors">
-            <td class="py-2.5 px-3">
-                <div class="font-sans font-medium text-gray-100">${safeName}</div>
-                <div class="text-xs text-gray-500 truncate max-w-xs font-mono" title="${safePkg}">${safePkg}</div>
+        <tr class="hover:bg-gray-750/50">
+            <td class="py-1.5 px-2 font-mono text-gray-200">
+                ${safePkg}${pidStr}
             </td>
-            <td class="py-2.5 px-3 text-gray-400 text-xs">${pidDisplay}</td>
-            <td class="py-2.5 px-3 text-right">${memDisplay}</td>
-            <td class="py-2.5 px-3 text-xs text-gray-400 font-sans">${metric}</td>
-            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-1.5 px-2 text-right">
+                ${memDisplay}
+            </td>
         </tr>`;
     }
 
@@ -198,59 +129,41 @@ function renderAppsTable() {
 socket.on('monitoring_data', (data) => {
     if (!data) return;
 
-    // Receiving data proves the device is actively transmitting
     updateConnectionStatus(true);
-    pingClientWatchdog();
-
-    // Visual heartbeat pulse on connection indicator
-    const indicator = document.getElementById('connection-indicator');
-    if (indicator) {
-        indicator.classList.add('scale-125');
-        setTimeout(() => indicator.classList.remove('scale-125'), 180);
-    }
-
-    // Update timestamp
-    const lastUpdateEl = document.getElementById('last-updated');
-    if (lastUpdateEl) {
-        const timeObj = data.timestamp ? new Date(data.timestamp) : new Date();
-        lastUpdateEl.textContent = `Last update: ${timeObj.toLocaleTimeString()}`;
-        lastUpdateEl.classList.remove('hidden');
-    }
 
     // Process RAM Data
     if (data.ram) {
         const r = data.ram;
         
-        // Calculate percentage with 1 decimal place to reflect real-time memory usage
         const pct = (r.totalBytes && r.totalBytes > 0)
             ? ((r.usedBytes / r.totalBytes) * 100).toFixed(1)
             : (r.usagePercentage !== undefined ? Number(r.usagePercentage).toFixed(0) : '0');
 
         document.getElementById('ram-percentage').textContent = `${pct}%`;
         
-        let color = '#3b82f6'; // Default Blue
+        let color = '#3b82f6'; // Blue
         if (r.memoryPressure === 'Moderate') color = '#eab308'; // Yellow
         if (r.memoryPressure === 'High') color = '#ef4444'; // Red
         
         document.getElementById('ram-circle').style.background = 
             `conic-gradient(${color} ${pct}%, #374151 ${pct}%, #374151 100%)`;
 
-        document.getElementById('ram-used').textContent = formatBytes(r.usedBytes, 2);
-        document.getElementById('ram-available').textContent = formatBytes(r.availableBytes, 2);
-        document.getElementById('ram-total').textContent = formatBytes(r.totalBytes, 2);
+        document.getElementById('ram-used').textContent = formatBytes(r.usedBytes);
+        document.getElementById('ram-available').textContent = formatBytes(r.availableBytes);
+        document.getElementById('ram-total').textContent = formatBytes(r.totalBytes);
         document.getElementById('ram-app').textContent = formatBytes(r.appMemoryBytes);
 
         const pressureEl = document.getElementById('ram-pressure');
         if (pressureEl) {
-            pressureEl.textContent = r.memoryPressure || '-';
-            pressureEl.className = r.memoryPressure === 'Normal' ? 'font-semibold text-green-400' :
-                                  (r.memoryPressure === 'Moderate' ? 'font-semibold text-yellow-400' : 'font-semibold text-red-400');
+            pressureEl.textContent = r.memoryPressure || '—';
+            pressureEl.className = r.memoryPressure === 'Normal' ? 'font-medium text-emerald-400' :
+                                  (r.memoryPressure === 'Moderate' ? 'font-medium text-amber-400' : 'font-medium text-rose-400');
         }
 
         const statusEl = document.getElementById('ram-status');
         if (statusEl) {
-            statusEl.textContent = r.systemMemoryStatus || '-';
-            statusEl.className = r.systemMemoryStatus === 'Normal' ? 'font-semibold text-green-400' : 'font-semibold text-red-400';
+            statusEl.textContent = r.systemMemoryStatus || '—';
+            statusEl.className = r.systemMemoryStatus === 'Normal' ? 'font-medium text-emerald-400' : 'font-medium text-rose-400';
         }
     }
 
@@ -265,11 +178,11 @@ socket.on('monitoring_data', (data) => {
         document.getElementById('storage-percentage').textContent = `${pct}%`;
         document.getElementById('storage-bar').style.width = `${pct}%`;
 
-        document.getElementById('storage-used-val').textContent = formatBytes(s.usedBytes, 2);
-        document.getElementById('storage-total-val').textContent = formatBytes(s.totalBytes, 2);
+        document.getElementById('storage-used-val').textContent = formatBytes(s.usedBytes);
+        document.getElementById('storage-total-val').textContent = formatBytes(s.totalBytes);
 
-        document.getElementById('storage-used').textContent = formatBytes(s.usedBytes, 2);
-        document.getElementById('storage-free').textContent = formatBytes(s.availableBytes, 2);
+        document.getElementById('storage-used').textContent = formatBytes(s.usedBytes);
+        document.getElementById('storage-free').textContent = formatBytes(s.availableBytes);
     }
 
     // Process Applications Data and ADB status
@@ -278,25 +191,25 @@ socket.on('monitoring_data', (data) => {
         renderAppsTable();
     }
 
-    // Update Source Badge & Informational Text
+    // Update Source Badge & Subtitle
     const sourceBadge = document.getElementById('apps-source-badge');
-    const infoText = document.getElementById('apps-info-text');
+    const subtitle = document.getElementById('apps-subtitle');
 
     if (data.adbStatus && data.adbStatus.active) {
         if (sourceBadge) {
-            sourceBadge.textContent = 'Source: ADB Shell (Live PSS)';
-            sourceBadge.className = 'text-xs px-2.5 py-1 rounded-full font-medium bg-blue-900/60 text-blue-300 border border-blue-700/50';
+            sourceBadge.textContent = 'ADB Active';
+            sourceBadge.className = 'text-[11px] px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-mono';
         }
-        if (infoText) {
-            infoText.textContent = `Real-time physical Proportional Set Size (PSS) retrieved directly via ADB dumpsys (${data.adbStatus.deviceId || 'USB'}).`;
+        if (subtitle && data.adbStatus.displayedProcesses !== undefined) {
+            subtitle.textContent = `Showing ${data.adbStatus.displayedProcesses} of ${data.adbStatus.totalProcesses || data.adbStatus.displayedProcesses} processes (≥ ${data.adbStatus.thresholdMB || 10} MB) — via ADB PSS`;
         }
     } else {
         if (sourceBadge) {
-            sourceBadge.textContent = 'Source: In-App Telemetry';
-            sourceBadge.className = 'text-xs px-2.5 py-1 rounded-full font-medium bg-gray-700 text-gray-300';
+            sourceBadge.textContent = data.adbStatus?.state === 'no_device' ? 'No ADB Device' : 'ADB Inactive';
+            sourceBadge.className = 'text-[11px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 font-mono';
         }
-        if (infoText) {
-            infoText.textContent = 'Android 10+ OS security sandboxing restricts ordinary apps from inspecting other processes\' memory. Memory Monitor\'s own memory is authentically reported via Debug.MemoryInfo. Connect via ADB over USB for device-wide process PSS measurements.';
+        if (subtitle) {
+            subtitle.textContent = 'Connect via ADB USB to inspect individual process PSS';
         }
     }
 });

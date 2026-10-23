@@ -22,24 +22,20 @@ let latestData = {
     ram: null,
     storage: null,
     apps: [],
-    inAppApps: [],
-    adbApps: [],
     connected: false,
-    lastUpdated: null,
-    totalFramesReceived: 0
+    lastUpdated: null
 };
 
 // Set of active Android TCP sockets
 const activeSockets = new Set();
 let watchdogTimer = null;
 
-// Initialize optional ADB collector for physical PSS process inspection
+// Initialize ADB collector for per-process PSS measurements
 const adbCollector = new AdbCollector({
     pollIntervalMs: 3500,
     onUpdate: (apps, status) => {
-        latestData.adbApps = apps;
+        latestData.apps = apps;
         if (latestData.connected) {
-            latestData.apps = apps;
             io.emit('monitoring_data', {
                 ram: latestData.ram,
                 storage: latestData.storage,
@@ -51,20 +47,17 @@ const adbCollector = new AdbCollector({
     }
 });
 
-// Start ADB polling
 adbCollector.start();
 
-// API endpoint for health check and diagnostics
+// API endpoint for diagnostics
 app.get('/api/status', (req, res) => {
     res.json({
         connected: latestData.connected,
         lastUpdated: latestData.lastUpdated,
-        totalFramesReceived: latestData.totalFramesReceived,
         activeSockets: activeSockets.size,
         ram: latestData.ram,
         storage: latestData.storage,
         appsCount: (latestData.apps || []).length,
-        apps: latestData.apps,
         adbStatus: adbCollector.getStatus()
     });
 });
@@ -72,29 +65,27 @@ app.get('/api/status', (req, res) => {
 function setDeviceConnected(connected) {
     if (latestData.connected !== connected) {
         latestData.connected = connected;
-        io.emit('device_status', { connected: latestData.connected });
-        console.log(`[Status] Android device is now ${connected ? 'CONNECTED' : 'DISCONNECTED'}`);
+        io.emit('device_status', { connected });
+        console.log(`[Status] Android device ${connected ? 'CONNECTED' : 'DISCONNECTED'}`);
     }
 }
 
 function resetWatchdog() {
     if (watchdogTimer) clearTimeout(watchdogTimer);
-    // If no metrics payload is received for 4 seconds, mark device as disconnected
     watchdogTimer = setTimeout(() => {
         if (latestData.connected) {
-            console.log('[Watchdog] No metrics received for 4 seconds, marking Android device as DISCONNECTED');
+            console.log('[Watchdog] No data for 4s — marking disconnected');
             setDeviceConnected(false);
         }
     }, 4000);
 }
 
-// WebSocket Connection (Frontend Browser Dashboard to Server)
+// WebSocket: browser dashboard connections
 io.on('connection', (socket) => {
-    console.log('[Web] Browser client connected to dashboard');
-    
-    // Send the latest known status and data immediately upon connection
+    console.log('[Web] Browser connected');
+
     socket.emit('device_status', { connected: latestData.connected });
-    if (latestData.ram || latestData.storage || (latestData.apps && latestData.apps.length > 0)) {
+    if (latestData.ram || latestData.storage) {
         socket.emit('monitoring_data', {
             ram: latestData.ram,
             storage: latestData.storage,
@@ -105,36 +96,29 @@ io.on('connection', (socket) => {
     }
 
     socket.on('disconnect', () => {
-        console.log('[Web] Browser client disconnected');
+        console.log('[Web] Browser disconnected');
     });
 });
 
-// Helper to process a parsed JSON object from Android
+// Process incoming JSON from Android
 function handleIncomingPayload(parsedData) {
     if (!parsedData || typeof parsedData !== 'object') return false;
-    if (!parsedData.ram && !parsedData.storage && !parsedData.apps) return false;
+    if (!parsedData.ram && !parsedData.storage) return false;
 
     if (parsedData.ram && typeof parsedData.ram === 'object') latestData.ram = parsedData.ram;
     if (parsedData.storage && typeof parsedData.storage === 'object') latestData.storage = parsedData.storage;
-    if (parsedData.apps && Array.isArray(parsedData.apps)) latestData.inAppApps = parsedData.apps;
 
-    latestData.totalFramesReceived++;
     latestData.lastUpdated = Date.now();
     parsedData.timestamp = latestData.lastUpdated;
 
-    // Use authentic ADB per-process PSS if ADB collector is active; otherwise use in-app telemetry
+    // Use ADB per-process PSS when available; otherwise omit per-app data
     const adbStatus = adbCollector.getStatus();
-    if (adbStatus.active && latestData.adbApps && latestData.adbApps.length > 0) {
-        parsedData.apps = latestData.adbApps;
+    if (adbStatus.active && latestData.apps && latestData.apps.length > 0) {
+        parsedData.apps = latestData.apps;
     } else {
-        parsedData.apps = latestData.inAppApps;
+        parsedData.apps = [];
     }
-    latestData.apps = parsedData.apps;
     parsedData.adbStatus = adbStatus;
-
-    if (latestData.totalFramesReceived % 10 === 0) {
-        console.log(`[Metrics] Total frames received: ${latestData.totalFramesReceived}. RAM usage: ${parsedData.ram?.usagePercentage}% (${parsedData.ram?.usedBytes} bytes), Storage: ${parsedData.storage?.usagePercentage}%, Apps reporting: ${parsedData.apps?.length || 0}`);
-    }
 
     setDeviceConnected(true);
     resetWatchdog();
@@ -142,12 +126,12 @@ function handleIncomingPayload(parsedData) {
     return true;
 }
 
-// TCP Server (Android App to Server)
+// TCP Server: Android → Desktop
 const tcpServer = net.createServer((socket) => {
     activeSockets.add(socket);
     socket.setKeepAlive(true, 5000);
-    console.log(`[TCP] Android connected from ${socket.remoteAddress}:${socket.remotePort} (Active sockets: ${activeSockets.size})`);
-    
+    console.log(`[TCP] Android connected from ${socket.remoteAddress}:${socket.remotePort}`);
+
     setDeviceConnected(true);
     resetWatchdog();
 
@@ -155,28 +139,23 @@ const tcpServer = net.createServer((socket) => {
 
     socket.on('data', (data) => {
         buffer += data.toString();
-        
-        // Split by newline to demarcate JSON messages.
-        // Android client sends newline-delimited JSON (\n).
+
         let messages = buffer.split('\n');
-        
+
         if (messages.length === 1) {
-            // No newline present yet; only try parsing if buffer looks like a complete JSON object
             const trimmed = buffer.trim();
             if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
                 try {
                     const parsedData = JSON.parse(trimmed);
                     if (handleIncomingPayload(parsedData)) {
-                        buffer = ''; // clear buffer after successful parse
+                        buffer = '';
                     }
                 } catch (_) {
-                    // Incomplete JSON fragment, continue accumulating in buffer
+                    // Incomplete JSON, continue accumulating
                 }
             }
         } else {
-            // Keep the last incomplete fragment in the buffer
             buffer = messages.pop() || '';
-            
             for (const msg of messages) {
                 const trimmed = msg.trim();
                 if (!trimmed) continue;
@@ -184,21 +163,20 @@ const tcpServer = net.createServer((socket) => {
                     const parsedData = JSON.parse(trimmed);
                     handleIncomingPayload(parsedData);
                 } catch (parseErr) {
-                    console.warn('[TCP] Ignored malformed message from Android:', parseErr.message);
+                    console.warn('[TCP] Malformed message:', parseErr.message);
                 }
             }
         }
 
-        // Buffer overflow protection
         if (buffer.length > 200000) {
-            console.log('[TCP] Buffer cleared to prevent overflow');
+            console.log('[TCP] Buffer overflow — cleared');
             buffer = '';
         }
     });
 
     socket.on('close', () => {
         activeSockets.delete(socket);
-        console.log(`[TCP] Android socket closed (${socket.remoteAddress}:${socket.remotePort}). Remaining active: ${activeSockets.size}`);
+        console.log(`[TCP] Socket closed (remaining: ${activeSockets.size})`);
         if (activeSockets.size === 0) {
             if (watchdogTimer) clearTimeout(watchdogTimer);
             setDeviceConnected(false);
@@ -206,7 +184,7 @@ const tcpServer = net.createServer((socket) => {
     });
 
     socket.on('error', (err) => {
-        console.error('[TCP] Socket Error:', err.message);
+        console.error('[TCP] Error:', err.message);
         activeSockets.delete(socket);
         if (activeSockets.size === 0) {
             if (watchdogTimer) clearTimeout(watchdogTimer);

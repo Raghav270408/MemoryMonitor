@@ -3,51 +3,16 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Known human-friendly package names for Android applications and system daemons.
+ * Minimum PSS threshold in MB. Processes below this value are filtered
+ * from the dashboard display to reduce clutter. Raw data is preserved
+ * internally so totals remain accurate.
+ *
+ * Rationale: system daemons and idle background services typically use
+ * 1-8 MB of PSS. Displaying them alongside apps using 100+ MB makes
+ * the list hard to scan. 10 MB is a reasonable default that hides most
+ * low-level daemons while keeping every user-visible app.
  */
-const KNOWN_PACKAGE_LABELS = {
-    'com.example.memorymonitor': 'Memory Monitor',
-    'com.android.systemui': 'System UI',
-    'system': 'Android System',
-    'com.google.android.gms': 'Google Play Services',
-    'com.google.android.gms.persistent': 'Google Play Services (Persistent)',
-    'com.android.chrome': 'Google Chrome',
-    'com.google.android.youtube': 'YouTube',
-    'com.google.android.apps.photos': 'Google Photos',
-    'com.google.android.apps.messaging': 'Messages',
-    'com.google.android.dialer': 'Phone',
-    'com.android.settings': 'Settings',
-    'com.google.android.googlequicksearchbox': 'Google App',
-    'com.google.android.calendar': 'Google Calendar',
-    'com.google.android.apps.maps': 'Google Maps',
-    'com.whatsapp': 'WhatsApp',
-    'com.instagram.android': 'Instagram',
-    'com.spotify.music': 'Spotify',
-    'com.facebook.katana': 'Facebook',
-    'com.twitter.android': 'X (Twitter)',
-    'org.telegram.messenger': 'Telegram',
-    'com.microsoft.emmx': 'Microsoft Edge',
-    'org.mozilla.firefox': 'Firefox'
-};
-
-/**
- * Resolves a human-readable display label from a package identifier.
- */
-function formatDisplayName(pkgName) {
-    if (!pkgName || typeof pkgName !== 'string') return 'Unknown Application';
-    const trimmed = pkgName.trim();
-    if (KNOWN_PACKAGE_LABELS[trimmed]) {
-        return KNOWN_PACKAGE_LABELS[trimmed];
-    }
-    // Clean package name fallback: e.g. com.example.camera -> Camera, surfaceflinger -> Surfaceflinger
-    const parts = trimmed.split('.');
-    const lastPart = parts[parts.length - 1];
-    if (lastPart && lastPart.length > 0) {
-        // Capitalize first letter
-        return lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
-    }
-    return trimmed;
-}
+const DEFAULT_DISPLAY_THRESHOLD_MB = 10;
 
 /**
  * Locates the adb executable on the local desktop system.
@@ -74,9 +39,13 @@ function findAdbExecutable() {
  * Parses raw `dumpsys meminfo` output from Android shell.
  * Extracts process names, PIDs, and PSS memory in KB, converting to bytes and MB.
  *
+ * The "Total PSS by process" section already aggregates multiple processes
+ * sharing the same package into a single entry, so no further grouping is
+ * needed here. Each line represents independent PSS for that process name.
+ *
  * @param {string} output - stdout from `adb shell dumpsys meminfo`
  * @param {number} [timestamp] - measurement timestamp in ms
- * @returns {Array<Object>} List of application memory records
+ * @returns {Array<Object>} List of application memory records, sorted by PSS descending
  */
 function parseDumpsysMeminfo(output, timestamp = Date.now()) {
     if (!output || typeof output !== 'string') return [];
@@ -121,14 +90,9 @@ function parseDumpsysMeminfo(output, timestamp = Date.now()) {
 
                     results.push({
                         packageName: packageName,
-                        displayName: formatDisplayName(packageName),
                         pid: pid,
                         memoryBytes: memoryBytes,
                         memoryMB: memoryMB,
-                        metric: 'PSS',
-                        source: 'ADB dumpsys meminfo',
-                        status: 'available',
-                        statusMessage: null,
                         timestamp: timestamp
                     });
                 }
@@ -143,19 +107,34 @@ function parseDumpsysMeminfo(output, timestamp = Date.now()) {
 }
 
 /**
+ * Filters a parsed app list to only include entries above the given MB threshold.
+ * Does not mutate the input array.
+ *
+ * @param {Array<Object>} apps - parsed app records from parseDumpsysMeminfo
+ * @param {number} [thresholdMB] - minimum PSS in MB to include
+ * @returns {Array<Object>} filtered subset, still sorted by memory descending
+ */
+function filterByThreshold(apps, thresholdMB = DEFAULT_DISPLAY_THRESHOLD_MB) {
+    if (!apps || !Array.isArray(apps)) return [];
+    return apps.filter(app => app.memoryMB >= thresholdMB);
+}
+
+/**
  * Manages periodic ADB-assisted collection of process memory metrics.
  */
 class AdbCollector {
     constructor(options = {}) {
         this.adbPath = options.adbPath || findAdbExecutable();
         this.pollIntervalMs = options.pollIntervalMs || 3500;
+        this.displayThresholdMB = options.displayThresholdMB || DEFAULT_DISPLAY_THRESHOLD_MB;
         this.timer = null;
         this.isPolling = false;
-        this.latestApps = [];
+        this.latestAppsRaw = [];    // Unfiltered, complete list
+        this.latestApps = [];       // Filtered for display
         this.latestStatus = {
             active: false,
             state: 'uninitialized',
-            message: 'ADB collector initializing'
+            message: 'ADB collector not started'
         };
         this.onUpdateCallback = options.onUpdate || null;
     }
@@ -186,6 +165,10 @@ class AdbCollector {
         return this.latestApps;
     }
 
+    getRawApps() {
+        return this.latestAppsRaw;
+    }
+
     /**
      * Executes ADB command with timeout and buffer protection.
      */
@@ -210,7 +193,6 @@ class AdbCollector {
         this.isPolling = true;
 
         try {
-            // Check connected ADB devices
             const devicesOutput = await this.runAdb(['devices'], 4000);
             const lines = devicesOutput.stdout.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('List of devices'));
 
@@ -218,12 +200,11 @@ class AdbCollector {
                 this.latestStatus = {
                     active: false,
                     state: 'no_device',
-                    message: 'No ADB device detected via USB. Using In-App telemetry.'
+                    message: 'No ADB device detected'
                 };
                 return;
             }
 
-            // Find first authorized device
             let authorizedSerial = null;
             let unauthorized = false;
 
@@ -246,32 +227,34 @@ class AdbCollector {
                     this.latestStatus = {
                         active: false,
                         state: 'unauthorized',
-                        message: 'Device unauthorized. Please unlock your phone and tap "Allow USB Debugging".'
+                        message: 'Device unauthorized — allow USB debugging on the phone'
                     };
                 } else {
                     this.latestStatus = {
                         active: false,
                         state: 'device_offline',
-                        message: 'ADB device is offline or busy.'
+                        message: 'ADB device is offline or busy'
                     };
                 }
                 return;
             }
 
-            // Execute dumpsys meminfo
             const meminfoArgs = ['-s', authorizedSerial, 'shell', 'dumpsys', 'meminfo'];
             const meminfoOutput = await this.runAdb(meminfoArgs, 7000);
 
-            const parsedApps = parseDumpsysMeminfo(meminfoOutput.stdout, Date.now());
+            const rawApps = parseDumpsysMeminfo(meminfoOutput.stdout, Date.now());
 
-            if (parsedApps.length > 0) {
-                this.latestApps = parsedApps;
+            if (rawApps.length > 0) {
+                this.latestAppsRaw = rawApps;
+                this.latestApps = filterByThreshold(rawApps, this.displayThresholdMB);
                 this.latestStatus = {
                     active: true,
                     state: 'connected',
                     deviceId: authorizedSerial,
-                    appsCount: parsedApps.length,
-                    message: `ADB connected (${authorizedSerial}). Real-time PSS memory available.`
+                    totalProcesses: rawApps.length,
+                    displayedProcesses: this.latestApps.length,
+                    thresholdMB: this.displayThresholdMB,
+                    message: `ADB connected (${authorizedSerial})`
                 };
 
                 if (this.onUpdateCallback) {
@@ -293,6 +276,7 @@ class AdbCollector {
 module.exports = {
     AdbCollector,
     parseDumpsysMeminfo,
-    formatDisplayName,
-    findAdbExecutable
+    filterByThreshold,
+    findAdbExecutable,
+    DEFAULT_DISPLAY_THRESHOLD_MB
 };

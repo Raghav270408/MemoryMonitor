@@ -1,20 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseDumpsysMeminfo, formatDisplayName } = require('../adbCollector');
+const { parseDumpsysMeminfo, filterByThreshold, DEFAULT_DISPLAY_THRESHOLD_MB } = require('../adbCollector');
 
 describe('AdbCollector Unit Tests', () => {
-
-    it('formats known package names into human-friendly display labels', () => {
-        assert.equal(formatDisplayName('com.example.memorymonitor'), 'Memory Monitor');
-        assert.equal(formatDisplayName('com.android.chrome'), 'Google Chrome');
-        assert.equal(formatDisplayName('com.google.android.youtube'), 'YouTube');
-        assert.equal(formatDisplayName('system'), 'Android System');
-        assert.equal(formatDisplayName('com.android.systemui'), 'System UI');
-        assert.equal(formatDisplayName('com.spotify.music'), 'Spotify');
-        // Unknown packages derive clean capitalized name from last segment
-        assert.equal(formatDisplayName('com.vendor.camera'), 'Camera');
-        assert.equal(formatDisplayName('net.custom.superapp'), 'Superapp');
-    });
 
     it('parses typical dumpsys meminfo output with comma-separated KB values and PIDs', () => {
         const sampleOutput = `
@@ -35,15 +23,11 @@ Total PSS by OOM adjustment:
 
         assert.equal(apps.length, 5);
 
-        // Verify top consumer (System UI)
+        // Verify top consumer (System UI process)
         assert.equal(apps[0].packageName, 'com.android.systemui');
-        assert.equal(apps[0].displayName, 'System UI');
         assert.equal(apps[0].pid, 1420);
         assert.equal(apps[0].memoryBytes, 245760 * 1024);
         assert.equal(apps[0].memoryMB, 240.0);
-        assert.equal(apps[0].metric, 'PSS');
-        assert.equal(apps[0].source, 'ADB dumpsys meminfo');
-        assert.equal(apps[0].status, 'available');
         assert.equal(apps[0].timestamp, 1700000000000);
 
         // Verify memory monitor app record
@@ -57,6 +41,32 @@ Total PSS by OOM adjustment:
         for (let i = 0; i < apps.length - 1; i++) {
             assert.ok(apps[i].memoryBytes >= apps[i + 1].memoryBytes);
         }
+    });
+
+    it('filters small/negligible entries below the configurable threshold', () => {
+        const apps = [
+            { packageName: 'heavy.app', memoryMB: 150.0, memoryBytes: 150 * 1024 * 1024 },
+            { packageName: 'medium.app', memoryMB: 25.0, memoryBytes: 25 * 1024 * 1024 },
+            { packageName: 'threshold.app', memoryMB: 10.0, memoryBytes: 10 * 1024 * 1024 },
+            { packageName: 'small.daemon', memoryMB: 8.5, memoryBytes: 8.5 * 1024 * 1024 },
+            { packageName: 'tiny.service', memoryMB: 1.2, memoryBytes: 1.2 * 1024 * 1024 }
+        ];
+
+        // Default threshold (10 MB)
+        const filteredDefault = filterByThreshold(apps);
+        assert.equal(filteredDefault.length, 3);
+        assert.equal(filteredDefault[0].packageName, 'heavy.app');
+        assert.equal(filteredDefault[1].packageName, 'medium.app');
+        assert.equal(filteredDefault[2].packageName, 'threshold.app');
+
+        // Custom threshold boundary testing
+        const filteredCustom = filterByThreshold(apps, 20.0);
+        assert.equal(filteredCustom.length, 2);
+        assert.equal(filteredCustom[0].packageName, 'heavy.app');
+        assert.equal(filteredCustom[1].packageName, 'medium.app');
+
+        // Retains raw data intact (non-mutating)
+        assert.equal(apps.length, 5);
     });
 
     it('handles lines without PID or with non-standard formatting safely', () => {
