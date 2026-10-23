@@ -108,6 +108,15 @@ function handleIncomingPayload(parsedData) {
     if (parsedData.ram && typeof parsedData.ram === 'object') latestData.ram = parsedData.ram;
     if (parsedData.storage && typeof parsedData.storage === 'object') latestData.storage = parsedData.storage;
 
+    // Ingest authentic display names reported by Android package manager if available
+    if (parsedData.apps && Array.isArray(parsedData.apps)) {
+        for (const app of parsedData.apps) {
+            if (app && app.packageName && app.displayName && app.displayName !== app.packageName) {
+                adbCollector.setLabel(app.packageName, app.displayName);
+            }
+        }
+    }
+
     latestData.lastUpdated = Date.now();
     parsedData.timestamp = latestData.lastUpdated;
 

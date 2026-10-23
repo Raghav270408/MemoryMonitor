@@ -1,6 +1,14 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseDumpsysMeminfo, filterByThreshold, DEFAULT_DISPLAY_THRESHOLD_MB } = require('../adbCollector');
+const {
+    parseDumpsysMeminfo,
+    filterByThreshold,
+    aggregateApps,
+    resolveDisplayName,
+    getBasePackage,
+    DEFAULT_DISPLAY_THRESHOLD_MB,
+    AdbCollector
+} = require('../adbCollector');
 
 describe('AdbCollector Unit Tests', () => {
 
@@ -103,5 +111,96 @@ Total PSS by OOM:
         assert.equal(apps.length, 1);
         assert.equal(apps[0].memoryBytes, 157286400); // 153600 * 1024
         assert.equal(apps[0].memoryMB, 150.0);       // 153600 / 1024
+    });
+
+    it('resolves friendly app names from package identifiers using resolution mechanism', () => {
+        const cache = new Map();
+        cache.set('com.custom.app', 'Custom App Name');
+
+        assert.equal(resolveDisplayName('com.instagram.android', cache), 'Instagram');
+        assert.equal(resolveDisplayName('com.whatsapp', cache), 'WhatsApp');
+        assert.equal(resolveDisplayName('com.google.android.youtube', cache), 'YouTube');
+        assert.equal(resolveDisplayName('com.android.chrome', cache), 'Chrome');
+        assert.equal(resolveDisplayName('com.android.systemui', cache), 'System UI');
+        assert.equal(resolveDisplayName('system', cache), 'Android System');
+        assert.equal(resolveDisplayName('surfaceflinger', cache), 'SurfaceFlinger');
+        assert.equal(resolveDisplayName('com.custom.app', cache), 'Custom App Name');
+    });
+
+    it('uses cached lookups to avoid repeatedly querying package metadata', () => {
+        const collector = new AdbCollector();
+        collector.setLabel('com.foo.bar', 'Foo Bar App');
+
+        // Lookups return cached label immediately
+        assert.equal(collector.getLabel('com.foo.bar'), 'Foo Bar App');
+        assert.equal(collector.getLabelCache().get('com.foo.bar'), 'Foo Bar App');
+
+        // Subprocess also resolves to parent app's cached label
+        assert.equal(collector.getLabel('com.foo.bar:service'), 'Foo Bar App');
+    });
+
+    it('falls back gracefully to package name for unknown packages without inventing fake names', () => {
+        const cache = new Map();
+        const unknownPkg = 'com.unknowncorp.specialservice123';
+
+        // Does NOT invent fake friendly names like "Specialservice123"
+        const resolved = resolveDisplayName(unknownPkg, cache);
+        assert.equal(resolved, unknownPkg);
+    });
+
+    it('extracts base package from sub-process identifiers correctly', () => {
+        assert.equal(getBasePackage('com.google.android.googlequicksearchbox:search'), 'com.google.android.googlequicksearchbox');
+        assert.equal(getBasePackage('com.android.chrome:privileged_process0'), 'com.android.chrome');
+        assert.equal(getBasePackage('system'), 'system');
+        assert.equal(getBasePackage(''), '');
+    });
+
+    it('safely aggregates multiple processes of the same application without double-counting', () => {
+        const rawProcesses = [
+            { packageName: 'com.google.android.googlequicksearchbox:googleapp', pid: 1001, memoryBytes: 157286400, memoryMB: 150.0 },
+            { packageName: 'com.google.android.googlequicksearchbox:search', pid: 1002, memoryBytes: 52428800, memoryMB: 50.0 },
+            { packageName: 'com.whatsapp', pid: 2001, memoryBytes: 104857600, memoryMB: 100.0 },
+            { packageName: 'com.whatsapp:sandboxed', pid: 2002, memoryBytes: 20971520, memoryMB: 20.0 },
+            { packageName: 'com.standalone.app', pid: 3001, memoryBytes: 31457280, memoryMB: 30.0 }
+        ];
+
+        const aggregated = aggregateApps(rawProcesses);
+
+        // 5 processes should be aggregated into 3 unique applications
+        assert.equal(aggregated.length, 3);
+
+        const gapp = aggregated.find(a => a.packageName === 'com.google.android.googlequicksearchbox');
+        assert.ok(gapp);
+        assert.equal(gapp.displayName, 'Google App');
+        assert.equal(gapp.memoryMB, 200.0); // 150 + 50
+        assert.equal(gapp.memoryBytes, 209715200);
+        assert.equal(gapp.processCount, 2);
+        assert.deepEqual(gapp.pids, [1001, 1002]);
+
+        const wa = aggregated.find(a => a.packageName === 'com.whatsapp');
+        assert.ok(wa);
+        assert.equal(wa.displayName, 'WhatsApp');
+        assert.equal(wa.memoryMB, 120.0); // 100 + 20
+        assert.equal(wa.processCount, 2);
+
+        // Verify sorted descending by memory
+        assert.equal(aggregated[0].packageName, 'com.google.android.googlequicksearchbox');
+        assert.equal(aggregated[1].packageName, 'com.whatsapp');
+        assert.equal(aggregated[2].packageName, 'com.standalone.app');
+    });
+
+    it('removes restricted, unavailable, and invalid measurements during aggregation', () => {
+        const mixedData = [
+            { packageName: 'com.valid.app', memoryBytes: 52428800, memoryMB: 50.0, status: 'available' },
+            { packageName: 'com.restricted.app', memoryBytes: null, memoryMB: null, status: 'restricted' },
+            { packageName: 'com.unavailable.app', memoryBytes: 0, memoryMB: 0, status: 'unavailable' },
+            { packageName: 'com.nan.app', memoryBytes: NaN, memoryMB: NaN },
+            { packageName: 'com.negative.app', memoryBytes: -100, memoryMB: -1.0 }
+        ];
+
+        const result = aggregateApps(mixedData);
+        assert.equal(result.length, 1);
+        assert.equal(result[0].packageName, 'com.valid.app');
+        assert.equal(result[0].memoryMB, 50.0);
     });
 });

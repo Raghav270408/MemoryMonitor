@@ -55,10 +55,6 @@
                         <span class="text-gray-500">System Status</span>
                         <span id="ram-status" class="text-gray-400">—</span>
                     </div>
-                    <div class="flex justify-between border-t border-gray-700 pt-1.5 mt-1.5">
-                        <span class="text-gray-500">This App</span>
-                        <span id="ram-app" class="text-blue-400">—</span>
-                    </div>
                 </div>
             </section>
 
@@ -99,15 +95,15 @@
             </section>
         </div>
 
-        <!-- PER-APP MEMORY (PSS via ADB) -->
+        <!-- APPLICATION MEMORY -->
         <section class="w-full bg-gray-800 p-5 rounded-lg">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                 <div>
-                    <h2 class="text-sm font-semibold tracking-widest uppercase text-gray-500">PER-APP MEMORY (PSS)</h2>
-                    <p id="apps-subtitle" class="text-[11px] text-gray-600 mt-0.5">Processes ≥ 10 MB — via ADB dumpsys meminfo</p>
+                    <h2 class="text-sm font-semibold tracking-widest uppercase text-gray-500">APPLICATION RAM</h2>
+                    <p id="apps-subtitle" class="text-[11px] text-gray-600 mt-0.5">Applications ≥ 10 MB — via ADB</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <span id="apps-source-badge" class="text-[11px] px-2 py-0.5 rounded bg-gray-700 text-gray-400">—</span>
+                    <span id="apps-source-badge" class="text-[11px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 font-mono">—</span>
                     <input type="text" id="apps-search" placeholder="Filter..." class="bg-gray-900 text-xs px-2.5 py-1.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-gray-300 w-28">
                 </div>
             </div>
@@ -115,8 +111,8 @@
             <table class="w-full text-left text-xs">
                 <thead>
                     <tr class="text-[10px] uppercase text-gray-600 border-b border-gray-700">
-                        <th class="py-2 px-2">Process</th>
-                        <th class="py-2 px-2 text-right">PSS</th>
+                        <th class="py-2 px-2">Application</th>
+                        <th class="py-2 px-2 text-right">RAM</th>
                     </tr>
                 </thead>
                 <tbody id="apps-table-body" class="divide-y divide-gray-700/50">
@@ -124,8 +120,8 @@
             </table>
 
             <div id="apps-empty-state" class="py-8 text-center text-gray-600 text-xs">
-                <p>No per-app data available</p>
-                <p class="mt-1 text-gray-700">Connect a device via ADB USB to see process memory</p>
+                <p id="apps-empty-message">No per-app data available</p>
+                <p id="apps-empty-submessage" class="mt-1 text-gray-700">Connect via ADB to monitor application RAM</p>
             </div>
         </section>
 
